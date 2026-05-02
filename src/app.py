@@ -1,22 +1,62 @@
 import os
 import sys
+import shutil
+import argparse
 import tempfile
 from pathlib import Path
+
+import torch
+from PIL import Image
 from flask import Flask, request, render_template_string, send_file
 
-app = Flask(__name__)
-
-SRC_DIR       = Path(__file__).parent.resolve()
-PROJECT_ROOT  = SRC_DIR.parent.resolve()
-TEMPLATES_DIR = PROJECT_ROOT / "templates"
-OUTPUT_DIR    = SRC_DIR / "outputs"
+SRC_DIR  = Path(__file__).parent.resolve()
+BASE_DIR = SRC_DIR
 
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from main import run_on_image
+from model        import restore_model
+from augmentation import get_val_transform
 
+app = Flask(__name__)
+
+_model       = None
+_class_names = None
+_device      = None
+_transform   = None
 _last_output = {}
+
+
+def load_model(checkpoint_path: Path, device: str):
+    """Load the baseline checkpoint and return model + class names."""
+    global _model, _class_names, _device, _transform
+
+    _device    = device
+    _transform = get_val_transform()
+
+    model, meta = restore_model(str(checkpoint_path), device=device)
+    model.eval()
+
+    _model       = model
+    _class_names = [name for name, _ in sorted(meta.items(), key=lambda x: x[1])]
+
+    print(f"  [app] Model loaded from {checkpoint_path}")
+    print(f"  [app] Classes: {_class_names}")
+
+
+def predict_image(image_path: str):
+    img = Image.open(image_path).convert("RGB")
+    tensor = _transform(img).unsqueeze(0).to(_device)
+
+    with torch.no_grad():
+        logits = _model(tensor)
+        probs  = torch.softmax(logits, dim=1)[0]
+
+    idx        = probs.argmax().item()
+    predicted  = _class_names[idx]
+
+    return predicted
+
 
 HTML = """
 <!DOCTYPE html>
@@ -195,7 +235,7 @@ HTML = """
 <div class="card">
 
     <h1>Traffic Sign Detection</h1>
-    <p class="subtitle">Classical CV pipeline - SIFT feature matching</p>
+    <p class="subtitle">Deep learning pipeline - EfficientNet classifier</p>
 
     <form method="POST" enctype="multipart/form-data"
           action="/predict" onsubmit="onSubmit()">
@@ -235,10 +275,8 @@ HTML = """
             </div>
 
             {% if result.has_output_image %}
-                <img class="annotated-img" src="/output_image" alt="annotated output">
+                <img class="annotated-img" src="/output_image" alt="uploaded image">
             {% endif %}
-
-
 
         {% endif %}
     </div>
@@ -269,46 +307,25 @@ def predict():
         tmp_path = tmp.name
 
     try:
-        pipeline_result = run_on_image(
-            image_path=tmp_path,
-            templates_dir=str(TEMPLATES_DIR),
-            output_dir=str(OUTPUT_DIR),
-        )
+        predicted = predict_image(tmp_path)
+        saved_path = Path(tempfile.gettempdir()) / f"last_upload{suffix}"
+        shutil.copy2(tmp_path, saved_path)
+        _last_output["path"] = str(saved_path)
 
-        if pipeline_result is None:
-            result = {
-                "filename":         file.filename,
-                "predicted":        None,
-                "status":           "no_match",
-                "has_output_image": False,
-                "error":            None,
-            }
-        else:
-            predicted = pipeline_result.get("predicted")
-            status    = pipeline_result.get("status", "no_match")
-
-            has_output_image = False
-            if predicted:
-                class_dir = OUTPUT_DIR / predicted
-                if class_dir.exists():
-                    images = sorted(class_dir.glob("*.jpg"))
-                    if images:
-                        _last_output["path"] = str(images[-1])
-                        has_output_image = True
-
-            result = {
-                "filename":         file.filename,
-                "predicted":        predicted,
-                "status":           status,
-                "has_output_image": has_output_image,
-                "error":            None,
-            }
-
+        result = {
+            "filename":         file.filename,
+            "predicted":        predicted,
+            "status":           "ok",
+            "has_output_image": True,
+            "error":            None,
+        }
     except Exception as e:
         result = {
-            "filename": file.filename,
-            "error":    str(e),
-            "predicted": None,
+            "filename":         file.filename,
+            "error":            str(e),
+            "predicted":        None,
+            "status":           "error",
+            "has_output_image": False,
         }
     finally:
         os.unlink(tmp_path)
@@ -318,12 +335,38 @@ def predict():
 
 @app.route("/output_image")
 def output_image():
-    """Serve the latest annotated output image produced by main.py."""
+    """Serve the last uploaded image."""
     path = _last_output.get("path")
     if path and Path(path).exists():
-        return send_file(path, mimetype="image/jpeg")
+        suffix   = Path(path).suffix.lower()
+        mimetype = "image/png" if suffix == ".png" else "image/jpeg"
+        return send_file(path, mimetype=mimetype)
     return "Image not found", 404
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Traffic Sign Detection - Flask app.")
+    parser.add_argument(
+        "data_dir",
+        type=str,
+        help="Path to the dataset directory used during training (e.g: ../dataset)",
+    )
+    args = parser.parse_args()
+
+    data_dir       = Path(args.data_dir).resolve()
+    data_name      = data_dir.name
+    checkpoint_dir = BASE_DIR / "../results" / data_name / "checkpoints"
+    checkpoint     = checkpoint_dir / "config1_baseline_best.pth"
+
+    if not checkpoint.exists():
+        print(f"  [app] ERROR: checkpoint not found at {checkpoint}")
+        sys.exit(1)
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"  [app] Device      : {device}")
+    print(f"  [app] Data dir    : {data_dir}")
+    print(f"  [app] Checkpoint  : {checkpoint}")
+
+    load_model(checkpoint, device)
+
     app.run(debug=True, port=5000)

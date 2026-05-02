@@ -1,7 +1,9 @@
 import os
+import sys
 import json
 import random
 import time
+import argparse
 from pathlib import Path
 
 import numpy as np
@@ -17,12 +19,6 @@ from synthesize  import get_synthetic_rows
 
 
 BASE_DIR = Path(__file__).resolve().parent
-
-IMAGES_DIR = (BASE_DIR / "../dataset").resolve()
-ANNOTATIONS_CSV = (BASE_DIR / "../dataset/annotations.csv").resolve()
-SYNTHETIC_DIR   = (BASE_DIR / "../dataset/synthetic").resolve()
-CHECKPOINT_DIR  = (BASE_DIR / "../results/checkpoints").resolve()
-RESULTS_DIR     = (BASE_DIR / "../results").resolve()
 
 # Training hyperparameters
 NUM_EPOCHS      = 30
@@ -152,7 +148,7 @@ def validate_one_epoch(model, loader, criterion, device):
     return running_loss / total, correct / total
 
 
-def run_training(config_id, device):
+def run_training(config_id, device, images_dir, annotations_csv, synthetic_dir, checkpoint_dir):
     """
     Train the model for one configuration.
 
@@ -174,20 +170,20 @@ def run_training(config_id, device):
 
     # Synthetic rows (only for configs 3 and 4)
     syn_rows    = None
-    syn_img_dir = IMAGES_DIR   # default - overridden below if synthetic is used
+    syn_img_dir = images_dir   # default - overridden below if synthetic is used
 
     if cfg["use_synthetic"]:
         syn_rows, syn_img_dir = get_synthetic_rows(
-            images_dir=IMAGES_DIR,
-            annotations_csv=ANNOTATIONS_CSV,
-            output_dir=SYNTHETIC_DIR,
+            images_dir=images_dir,
+            annotations_csv=annotations_csv,
+            output_dir=synthetic_dir,
             n_per_class=N_SYNTHETIC_PER_CLASS,
             regenerate=False,
         )
 
     train_ds, val_ds, test_ds, label_map, class_names = get_datasets(
-        images_dir=IMAGES_DIR,
-        annotations_csv=ANNOTATIONS_CSV,
+        images_dir=images_dir,
+        annotations_csv=annotations_csv,
         train_transform=train_transform,
         val_test_transform=val_transform,
         synthetic_rows=syn_rows,
@@ -278,7 +274,7 @@ def run_training(config_id, device):
                 model, optimizer, epoch, val_acc,
                 config_name=cfg["name"],
                 label_map=label_map,
-                checkpoint_dir=CHECKPOINT_DIR,
+                checkpoint_dir=checkpoint_dir,
             )
         else:
             patience_count += 1
@@ -293,7 +289,7 @@ def run_training(config_id, device):
     return history
 
 
-def save_history(history, results_dir=RESULTS_DIR):
+def save_history(history, results_dir):
     """Save training history to a JSON file for later plotting."""
     os.makedirs(results_dir, exist_ok=True)
     path = os.path.join(results_dir, f"{history['config_name']}_history.json")
@@ -303,22 +299,48 @@ def save_history(history, results_dir=RESULTS_DIR):
     return path
 
 
-def load_history(config_name, results_dir=RESULTS_DIR):
+def load_history(config_name, results_dir):
     path = os.path.join(results_dir, f"{config_name}_history.json")
     with open(path) as f:
         return json.load(f)
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Train classifier across four configs.")
+    parser.add_argument(
+        "data_dir",
+        type=str,
+        help="Path to the dataset directory (e.g. ../dataset)",
+    )
+    args = parser.parse_args()
+
+    data_dir        = Path(args.data_dir).resolve()
+    data_name       = data_dir.name
+
+    images_dir      = data_dir
+    annotations_csv = data_dir / "annotations.csv"
+    synthetic_dir   = data_dir / "synthetic"
+
+    results_dir     = (BASE_DIR / "../results" / data_name).resolve()
+    checkpoint_dir  = results_dir / "checkpoints"
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"\n  Device: {device}")
+    print(f"\n  Device      : {device}")
+    print(f"  Data dir    : {images_dir}")
+    print(f"  Results dir : {results_dir}")
     set_seed(RANDOM_SEED)
 
     all_histories = {}
 
     for config_id in CONFIGS_TO_RUN:
-        history = run_training(config_id, device)
-        save_history(history)
+        history = run_training(
+            config_id, device,
+            images_dir=images_dir,
+            annotations_csv=annotations_csv,
+            synthetic_dir=synthetic_dir,
+            checkpoint_dir=checkpoint_dir,
+        )
+        save_history(history, results_dir=results_dir)
         all_histories[config_id] = history
 
     # Summary table

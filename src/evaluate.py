@@ -1,5 +1,7 @@
 import os
+import sys
 import json
+import argparse
 from pathlib import Path
 
 import numpy as np
@@ -14,18 +16,12 @@ from sklearn.metrics import (
     classification_report
 )
 
-from dataset  import get_datasets, get_dataloaders, IMAGES_DIR, ANNOTATIONS_CSV
+from dataset  import get_datasets, get_dataloaders
 from model    import restore_model
 from augmentation import get_val_transform
 
 
 BASE_DIR = Path(__file__).resolve().parent
-IMAGES_DIR = (BASE_DIR / "../dataset").resolve()
-
-CHECKPOINT_DIR = (BASE_DIR / "../results/checkpoints").resolve()
-RESULTS_DIR    = (BASE_DIR / "../results").resolve()
-FIGURES_DIR    = (BASE_DIR / "../results/figures").resolve()
-os.makedirs(FIGURES_DIR, exist_ok=True)
 
 
 def evaluate_on_test(model, test_loader, class_names, device):
@@ -213,28 +209,20 @@ def plot_misclassified(eval_result, test_ds, n_samples=16, title="Misclassified 
     return fig
 
 
-def run_full_evaluation(config_names=None, device=None):
+def run_full_evaluation(config_names, device, images_dir, annotations_csv,
+                        checkpoint_dir, results_dir, figures_dir):
     """
     Load each trained checkpoint, evaluate on the test set and save all plots.
 
     config_names : list of config names (e.g. ["config1_baseline", ...]).
     """
-    if device is None:
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-
-    if config_names is None:
-        config_names = [
-            "config1_baseline",
-            "config2_augmented",
-            "config3_synthetic",
-            "config4_synth_augmented",
-        ]
+    os.makedirs(figures_dir, exist_ok=True)
 
     val_transform = get_val_transform()
 
     _, _, test_ds, label_map, class_names = get_datasets(
-        images_dir=IMAGES_DIR,
-        annotations_csv=ANNOTATIONS_CSV,
+        images_dir=images_dir,
+        annotations_csv=annotations_csv,
         val_test_transform=val_transform,
     )
 
@@ -244,7 +232,7 @@ def run_full_evaluation(config_names=None, device=None):
     all_eval_results = []
 
     for cfg_name in config_names:
-        ckpt_path = os.path.join(CHECKPOINT_DIR, f"{cfg_name}_best.pth")
+        ckpt_path = os.path.join(checkpoint_dir, f"{cfg_name}_best.pth")
         if not Path(ckpt_path).exists():
             print(f"  [evaluate] Checkpoint not found: {ckpt_path} - skipping")
             continue
@@ -262,25 +250,25 @@ def run_full_evaluation(config_names=None, device=None):
         plot_confusion_matrix(
             eval_res["cm"], class_names,
             title=f"Confusion Matrix - {cfg_name}",
-            save_path=os.path.join(FIGURES_DIR, f"{cfg_name}_cm.png"),
+            save_path=os.path.join(figures_dir, f"{cfg_name}_cm.png"),
         )
 
         # Misclassified
         plot_misclassified(
             eval_res,
             test_ds,
-            save_path=os.path.join(FIGURES_DIR, f"{cfg_name}_misclassified.png"),
+            save_path=os.path.join(figures_dir, f"{cfg_name}_misclassified.png"),
             title=f"Misclassified Samples - {cfg_name}"
         )
 
         # Training curves
-        history_path = os.path.join(RESULTS_DIR, f"{cfg_name}_history.json")
+        history_path = os.path.join(results_dir, f"{cfg_name}_history.json")
         if Path(history_path).exists():
             with open(history_path) as f:
                 history = json.load(f)
             plot_training_curves(
                 history,
-                save_path=os.path.join(FIGURES_DIR, f"{cfg_name}_curves.png"),
+                save_path=os.path.join(figures_dir, f"{cfg_name}_curves.png"),
             )
 
         all_eval_results.append(eval_res)
@@ -289,7 +277,7 @@ def run_full_evaluation(config_names=None, device=None):
     if len(all_eval_results) >= 2:
         compare_confusion_matrices(
             all_eval_results,
-            save_path=os.path.join(FIGURES_DIR, "comparison_confusion_matrices.png"),
+            save_path=os.path.join(figures_dir, "comparison_confusion_matrices.png"),
         )
 
     # Print final accuracy table
@@ -306,4 +294,42 @@ def run_full_evaluation(config_names=None, device=None):
 
 
 if __name__ == "__main__":
-    run_full_evaluation()
+    parser = argparse.ArgumentParser(description="Evaluate trained classifiers.")
+    parser.add_argument(
+        "data_dir",
+        type=str,
+        help="Path to the dataset directory (e.g. ../dataset)",
+    )
+    args = parser.parse_args()
+
+    data_dir        = Path(args.data_dir).resolve()
+    data_name       = data_dir.name
+
+    images_dir      = data_dir
+    annotations_csv = data_dir / "annotations.csv"
+
+    results_dir     = (BASE_DIR / "../results" / data_name).resolve()
+    checkpoint_dir  = results_dir / "checkpoints"
+    figures_dir     = results_dir / "figures"
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"\n  Device      : {device}")
+    print(f"  Data dir    : {images_dir}")
+    print(f"  Results dir : {results_dir}")
+
+    config_names = [
+        "config1_baseline",
+        "config2_augmented",
+        "config3_synthetic",
+        "config4_synth_augmented",
+    ]
+
+    run_full_evaluation(
+        config_names=config_names,
+        device=device,
+        images_dir=images_dir,
+        annotations_csv=annotations_csv,
+        checkpoint_dir=checkpoint_dir,
+        results_dir=results_dir,
+        figures_dir=figures_dir,
+    )
