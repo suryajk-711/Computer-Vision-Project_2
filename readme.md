@@ -95,7 +95,7 @@ Then open `http://127.0.0.1:5000` and upload an image.
 
 2. **Preprocessing & Augmentation** - All images are resized to 224×224 and normalized using ImageNet mean and standard deviation. For augmented configs, random rotation (±15°), perspective distortion, and color jitter are applied during training to simulate real-world variation in lighting and viewing angle.
 
-3. **Synthetic Image Generation** - For configs 3 and 4, additional synthetic training images are generated per class (e.g: via brightness and blur variations) and injected into the training set to improve robustness under scarce data conditions.
+3. **Synthetic Image Generation** - For configs 3 and 4, additional synthetic training images are generated per class (e.g: via brightness and blur variations)
 
 4. **Model - EfficientNet-B0** - A pretrained EfficientNet-B0 backbone serves as the feature extractor. A custom classification head (AdaptiveAvgPool => Flatten => Dropout => Linear) is attached on top. The backbone is initially frozen so only the head is trained.
 
@@ -107,13 +107,14 @@ Then open `http://127.0.0.1:5000` and upload an image.
 
 ## Results
 
-<img width="1000" height="800" alt="image" src="https://github.com/user-attachments/assets/ec399d24-5336-43ac-b509-d0b95608bd3a" />
-
-<img width="1000" height="800" alt="image" src="https://github.com/user-attachments/assets/5796ed74-de58-4b79-bb11-859957675ba6" />
-
 - **Custom dataset (3 classes):** The model achieved **100% accuracy**, confirming the pipeline is well-designed and the feature extraction is effective for the 3 target classes.
 
+<img width="1000" height="800" alt="image" src="https://github.com/user-attachments/assets/ec399d24-5336-43ac-b509-d0b95608bd3a" />
+
+
 - **LISA dataset (9 classes):** The model generalizes reasonably well, reaching **87–92% accuracy** despite being trained on a different data distribution - demonstrating the model's transferability across datasets.
+
+<img width="1000" height="800" alt="image" src="https://github.com/user-attachments/assets/5796ed74-de58-4b79-bb11-859957675ba6" />
 
 ---
 
