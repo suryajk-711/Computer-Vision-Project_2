@@ -1,5 +1,5 @@
 .venv/
-db_lisa_tiny/
+/db_lisa_tiny/
 
 # Got this from https://raw.githubusercontent.com/github/gitignore/refs/heads/main/Python.gitignore
 
